@@ -1,4 +1,12 @@
 
+const simulatedZ = 2;
+const focal = 2.;
+const scale = 5;
+const pixelSize = 1;
+const rotatePhase = 15;
+const expandPhase = 5;
+const speedScaling = 0.01;
+
 class textMorphing extends Default {
 
     constructor({ctx, guiBuilder}) {
@@ -27,6 +35,7 @@ class textMorphing extends Default {
         this.fallingEdgeBuffer = null;        
         this.edge = 0;
         this.wordIndex = 1;
+        this.lastFrame = 0;
     }
 
     onKeyDown({key}) {
@@ -47,6 +56,19 @@ class textMorphing extends Default {
 
     /* Method called each render frame, up to */
     /* 60 times per second on a 60hz monitor  */
+
+    randomVelocity(minVelocity, maxVelocity) {
+
+        const velocity = minVelocity + (maxVelocity - minVelocity) * Math.random();
+
+        const vx = Math.random() * 2 - 1;
+        const vy = Math.random() * 2 - 1;
+        const vz = Math.random() * 2 - 1;
+
+        const length = Math.sqrt(vx*vx+vy*vy+vz*vz);
+
+        return { x: vx*velocity/length, y: vy*velocity/length, z: vz*velocity/length}
+    }
 
     getPixels(canvas, word) {
 
@@ -74,7 +96,9 @@ class textMorphing extends Default {
                     minY = Math.min(minY, y);
                     maxY = Math.max(maxY, y);                    
 
-                    pixels.push({ x, y, color });
+                    const rv = this.randomVelocity(0.5, 0.8);    
+
+                    pixels.push({ x:x, y:y, z:simulatedZ, vx:rv.x, vy:rv.y, vz:rv.z, color });
                 }
             }
         }
@@ -100,67 +124,91 @@ class textMorphing extends Default {
         return Math.sqrt(x*x+y*y);
     }
 
-    interpolate(pixel1, pixel2, animation) {
+    expand(pixels, time) {
 
-        const x = this.lerp(pixel1.x, pixel2.x, animation);
-        const y = this.lerp(pixel1.y, pixel2.y, animation);        
+        for(let pixel of pixels) {
 
-        const color = this.lerp(pixel1.color, pixel2.color, animation);
+            const velocityCorrection = Math.pow(time/5, 1/20); 
+            const speedScaling = 0.01;
 
-        return { x, y, color };
+            pixel.x += pixel.vx * speedScaling * velocityCorrection;
+            pixel.y += pixel.vy * speedScaling * velocityCorrection;
+            pixel.z += pixel.vz * speedScaling * velocityCorrection;
+        }
     }
 
+    rotate(pixels, dt) {
 
+        for(let pixel of pixels) {
 
-    /*
-    interpolate(pixel1, pixel2, animation) {
+            const velocityCorrection = Math.pow(time/5, 1/20); 
 
-        const angle1 = Math.atan2(pixel1.y, pixel1.x);
-        const angle2 = Math.atan2(pixel2.y, pixel2.x) + Math.PI * 2;        
+            const localX = pixel.x;
+            const localZ = pixel.z - simulatedZ;
 
-        const radius1 = this.length(pixel1.x, pixel1.y);
-        const radius2 = this.length(pixel2.x, pixel2.y);        
+            const angularSpeed = 1;
+            const rotation = angularSpeed * dt;
 
-        const iangle = this.lerp(angle1, angle2, animation);
-        const iradius = this.lerp(radius1, radius2, animation);        
+            const dx = localX * Math.cos(rotation) + localZ * Math.sin(rotation);
+            const dz = localX * -Math.sin(rotation) + localZ * Math.cos(rotation);
 
-        const x = Math.cos(iangle) * iradius;
-        const y = Math.sin(iangle) * iradius;
-
-        const color = this.lerp(pixel1.color, pixel2.color, animation);
-
-        return { x, y, color };
+            pixel.x = dx;
+            pixel.z = simulatedZ + dz;
+        }
     }
-    */
 
-    blit(ctx, pixels1, pixels2, X, Y, animation) {
+    project(x, y, z) {
+        return { x:x*focal/z, y:y*focal/z, z:0 };
+    }
+
+    blit(ctx, pixels, X, Y, dt) {
+
+        for(let pixel of pixels) {
+
+            if(pixel.z > 0) {
+                ctx.fillStyle = `rgb(${pixel.color}, ${pixel.color}, ${pixel.color})`;
+                const screenCoords = this.project(pixel.x, pixel.y, pixel.z);
+                ctx.fillRect(X + screenCoords.x * scale, Y + screenCoords.y * scale, pixelSize*scale/pixel.z, pixelSize*scale/pixel.z);
+            }
+        }
+    }
+
+/*
 
         const maxPixels = Math.max(pixels1.length, pixels2.length);        
-        const blackPixel = { x: 0, y: 0, color : 0 };
+        const blackPixel = { x: 0, y: 0, z: 0, vx:0, vy:0, vz:0, color : 0 };
 
         for(let n=0; n<maxPixels; n++) {
 
-            let sourcePixel, destinationPixel;
+            let sourcePixe-l, destinationPixel;
 
             if(n>=pixels1.length) {
-                sourcePixel = blackPixel;
+                sourcePixel = { x: 0, y: 0, z: 0, vx:0, vy:0, vz:0, color : 0 };
                 destinationPixel = pixels2[n];
             }
             else 
             if(n>=pixels2.length) {
                 sourcePixel = pixels1[n];                
-                destinationPixel = blackPixel;
+                destinationPixel = { x: 0, y: 0, z: 0, vx:0, vy:0, vz:0, color : 0 };
             }
             else {
                 sourcePixel = pixels1[n];
                 destinationPixel = pixels2[n];
             }
 
-            const pixel = this.interpolate(sourcePixel, destinationPixel, animation);
-            ctx.fillStyle = `rgb(${pixel.color}, ${pixel.color}, ${pixel.color})`;
-            ctx.fillRect(X + pixel.x*4, Y + pixel.y*4, 2, 2);
+            if(time < 5) {
+                const pixel = this.expand(sourcePixel, time);
+
+                sourcePixel.x = pixel.x;
+
+
+                ctx.fillStyle = `rgb(${pixel.color}, ${pixel.color}, ${pixel.color})`;
+                ctx.fillRect(X + pixel.x*4, Y + pixel.y*4, 2, 2);
+            }
         }
+        
     }
+    */
 
     offsetDrawWord(canvas, text) {
 
@@ -179,6 +227,9 @@ class textMorphing extends Default {
     }
 
     render({ctx, time}) {
+
+        const dt = time - this.lastFrame;
+        this.lastFrame = time;
 
         const animPeriod = 3.;
         const animTransition = 0.5;
@@ -199,23 +250,17 @@ class textMorphing extends Default {
         if(this.risingEdgeBuffer == null) {
             this.fallingEdgeBuffer = this.getPixels(offscreen, words[0]);
             this.risingEdgeBuffer = this.getPixels(offscreen, words[1]);
-
-            this.wordIndex = 2;
         }
 
-        if(this.edge == 0 && animation > 0.999) {
-            this.edge = 1;
-            this.fallingEdgeBuffer = this.getPixels(offscreen, words[(this.wordIndex++)%words.length]);    
+        if(time<expandPhase) {
+           this.expand(this.fallingEdgeBuffer.pixels, dt);
         }
-
-        if(this.edge == 1 && animation < 0.001) {
-            this.edge = 0;
-            this.risingEdgeBuffer =this.getPixels(offscreen, words[(this.wordIndex++)%words.length]);               
+        else if(time<rotatePhase) {
+            this.rotate(this.fallingEdgeBuffer.pixels, dt);
         }
+ 
 
-        console.log(this.wordIndex);
-
-        this.blit(ctx, this.fallingEdgeBuffer.pixels, this.risingEdgeBuffer.pixels, W/2, H/2, animation);
+       this.blit(ctx, this.fallingEdgeBuffer.pixels, W/2, H/2);
     }
 }
 
